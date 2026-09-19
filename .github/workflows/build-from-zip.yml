@@ -23,14 +23,27 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
+      - name: Configure Android SDK
+        shell: bash
         run: |
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=${ANDROID_HOME:-/usr/local/lib/android/sdk}" >> "$GITHUB_ENV"
+
+          SDKMANAGER="${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager || true)"
+          fi
+
+          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
+            echo "sdkmanager was not found on the GitHub runner."
+            exit 1
+          fi
+
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Unpack Android project
+        shell: bash
         run: |
           rm -rf extracted_project
           mkdir -p extracted_project
@@ -43,6 +56,7 @@ jobs:
           SETTINGS_FILE="$(find extracted_project -type f \( -name settings.gradle -o -name settings.gradle.kts \) | head -n 1)"
           if [ -z "$SETTINGS_FILE" ]; then
             echo "Android project root not found: settings.gradle/settings.gradle.kts is missing."
+            find extracted_project -maxdepth 4 -type f | sort | head -200
             exit 1
           fi
           PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
@@ -56,7 +70,10 @@ jobs:
 
       - name: Build debug APK
         working-directory: ${{ steps.project.outputs.dir }}
-        run: gradle assembleDebug --stacktrace
+        shell: bash
+        run: |
+          gradle --version
+          gradle assembleDebug --stacktrace
 
       - name: Find APK
         id: apk
@@ -65,6 +82,7 @@ jobs:
           APK_FILE="$(find "${{ steps.project.outputs.dir }}" -type f -path '*/build/outputs/apk/debug/*.apk' | head -n 1)"
           if [ -z "$APK_FILE" ]; then
             echo "APK was not created."
+            find "${{ steps.project.outputs.dir }}" -type f -name '*.apk' -print
             exit 1
           fi
           echo "file=$APK_FILE" >> "$GITHUB_OUTPUT"
